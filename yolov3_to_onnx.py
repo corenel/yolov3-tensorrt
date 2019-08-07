@@ -131,7 +131,11 @@ class DarkNetParser(object):
         if remainder.replace(' ', '')[0] == '#':
             remainder = remainder.split('\n', 1)[1]
 
-        layer_param_block, remainder = remainder.split('\n\n', 1)
+        try:
+            layer_param_block, remainder = remainder.split('\n\n', 1)
+        except:
+            layer_param_block = remainder.split('\n\n', 1)[0]
+            remainder = ''
         layer_param_lines = layer_param_block.split('\n')[1:]
         layer_name = str(self.layer_counter).zfill(3) + '_' + layer_type
         layer_dict = dict(type=layer_type)
@@ -442,7 +446,7 @@ class GraphBuilderONNX(object):
                 inputs.extend(inputs_layer)
         del weight_loader
         self.graph_def = helper.make_graph(nodes=self._nodes,
-                                           name='YOLOv3-608',
+                                           name='TinyYOLOv3-416',
                                            inputs=inputs,
                                            outputs=outputs,
                                            initializer=initializer)
@@ -749,9 +753,8 @@ def main():
 
     # Download the config for YOLOv3 if not present yet, and analyze the checksum:
     cfg_file_path = download_file(
-        'yolov3.cfg',
-        'https://raw.githubusercontent.com/pjreddie/darknet/f86901f6177dfc6116360a13cc06ab680e0c86b0/cfg/yolov3.cfg',
-        'b969a43a848bbf26901643b833cfb96c')
+        'yolov3-tiny.cfg',
+        'https://raw.githubusercontent.com/pjreddie/darknet/master/cfg/yolov3-tiny.cfg')
 
     # These are the only layers DarkNetParser will extract parameters from. The three layers of
     # type 'yolo' are not parsed in detail because they are included in the post-processing later:
@@ -761,15 +764,16 @@ def main():
     # layer's configs from the cfg file:
     parser = DarkNetParser(supported_layers)
     layer_configs = parser.parse_cfg_file(cfg_file_path)
+    for layer in layer_configs:
+        print(layer)
     # We do not need the parser anymore after we got layer_configs:
     del parser
 
     # In above layer_config, there are three outputs that we need to know the output
     # shape of (in CHW format):
     output_tensor_dims = OrderedDict()
-    output_tensor_dims['082_convolutional'] = [255, 19, 19]
-    output_tensor_dims['094_convolutional'] = [255, 38, 38]
-    output_tensor_dims['106_convolutional'] = [255, 76, 76]
+    output_tensor_dims['016_convolutional'] = [255, 13, 13]
+    output_tensor_dims['023_convolutional'] = [255, 26, 26]
 
     # Create a GraphBuilderONNX object with the known output tensor dimensions:
     builder = GraphBuilderONNX(output_tensor_dims)
@@ -777,8 +781,7 @@ def main():
     # We want to populate our network with weights later, that's why we download those from
     # the official mirror (and verify the checksum):
     weights_file_path = download_file(
-        'yolov3.weights', 'https://pjreddie.com/media/files/yolov3.weights',
-        'c84e5b99d0e52cd466ae710cadf6d84c')
+        'yolov3-tiny.weights', 'https://pjreddie.com/media/files/yolov3-tiny.weights')
 
     # Now generate an ONNX graph with weights from the previously parsed layer configurations
     # and the weights file:
@@ -793,7 +796,7 @@ def main():
     onnx.checker.check_model(yolov3_model_def)
 
     # Serialize the generated ONNX graph to this file:
-    output_file_path = 'yolov3.onnx'
+    output_file_path = 'yolov3-tiny.onnx'
     onnx.save(yolov3_model_def, output_file_path)
 
 

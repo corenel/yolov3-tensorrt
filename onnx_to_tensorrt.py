@@ -110,8 +110,9 @@ def get_engine(onnx_file_path, engine_file_path=""):
         """Takes an ONNX file and creates a TensorRT engine to run inference with"""
         with trt.Builder(TRT_LOGGER) as builder, builder.create_network(
         ) as network, trt.OnnxParser(network, TRT_LOGGER) as parser:
-            builder.max_workspace_size = 1 << 30  # 1GB
+            builder.max_workspace_size = 1 << 28  # 256MB
             builder.max_batch_size = 1
+            builder.fp16_mode = True
             # Parse model file
             if not os.path.exists(onnx_file_path):
                 print(
@@ -145,8 +146,8 @@ def main():
     """Create a TensorRT engine for ONNX-based YOLOv3-608 and run inference."""
 
     # Try to load a previously generated YOLOv3-608 network graph in ONNX format:
-    onnx_file_path = 'yolov3.onnx'
-    engine_file_path = "yolov3.trt"
+    onnx_file_path = 'yolov3-tiny.onnx'
+    engine_file_path = "yolov3-tiny.trt"
     # Download a dog image and save it to the following file path:
     input_image_path = download_file(
         'dog.jpg',
@@ -154,7 +155,7 @@ def main():
         checksum_reference=None)
 
     # Two-dimensional tuple with the target network's (spatial) input resolution in HW ordered
-    input_resolution_yolov3_HW = (608, 608)
+    input_resolution_yolov3_HW = (416, 416)
     # Create a pre-processor object by specifying the required input resolution for YOLOv3
     preprocessor = PreprocessYOLO(input_resolution_yolov3_HW)
     # Load an image from the specified input path, and return it together with  a pre-processed version
@@ -163,7 +164,7 @@ def main():
     shape_orig_WH = image_raw.size
 
     # Output shapes expected by the post-processor
-    output_shapes = [(1, 255, 19, 19), (1, 255, 38, 38), (1, 255, 76, 76)]
+    output_shapes = [(1, 255, 13, 13), (1, 255, 26, 26)]
     # Do inference with TensorRT
     trt_outputs = []
     with get_engine(onnx_file_path, engine_file_path
@@ -187,19 +188,10 @@ def main():
 
     postprocessor_args = {
         "yolo_masks": [
-            (6, 7, 8), (3, 4, 5), (0, 1, 2)
+            (3, 4, 5), (1, 2, 3)
         ],  # A list of 3 three-dimensional tuples for the YOLO masks
-        "yolo_anchors": [
-            (10, 13),
-            (16, 30),
-            (33, 23),
-            (30, 61),
-            (62, 45),  # A list of 9 two-dimensional tuples for the YOLO anchors
-            (59, 119),
-            (116, 90),
-            (156, 198),
-            (373, 326)
-        ],
+        "yolo_anchors": [(10, 14), (23, 27), (37, 58), (81, 82), (135, 169),
+                         (344, 319)],
         "obj_threshold":
             0.6,  # Threshold for object coverage, float value between 0 and 1
         "nms_threshold":
@@ -210,7 +202,8 @@ def main():
     postprocessor = PostprocessYOLO(**postprocessor_args)
 
     # Run the post-processing algorithms on the TensorRT outputs and get the bounding box details of detected objects
-    boxes, classes, scores = postprocessor.process(trt_outputs, (shape_orig_WH))
+    boxes, classes, scores = postprocessor.process(trt_outputs,
+                                                   (shape_orig_WH))
     # Draw the bounding boxes onto the original input image and save it as a PNG file
     obj_detected_img = draw_bboxes(image_raw, boxes, scores, classes,
                                    ALL_CATEGORIES)
