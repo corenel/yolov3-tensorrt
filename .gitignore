@@ -1,7 +1,6 @@
 .idea
 *.weights
 *.onnx
-*.cfg
 *.trt
 *.jpg
 *.png

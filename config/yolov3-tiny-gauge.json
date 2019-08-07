@@ -1,0 +1,19 @@
+{
+  "cfg_file_path": "model/yolov3-tiny-gauge.cfg",
+  "weights_file_path": "model/yolov3-tiny-gauge_100000.weights",
+  "onnx_file_path": "model/yolov3-tiny-gauge.onnx",
+  "trt_file_path": "model/yolov3-tiny-gauge.trt",
+  "trt_fp16_mode": true,
+  "label_file_path": "model/gauge.names",
+  "input_resolution": [416, 416],
+  "output_tensor_dims": {
+    "016_convolutional": [21, 13, 13],
+    "023_convolutional": [21, 26, 26]
+  },
+  "output_shapes": [[1, 21, 13, 13], [1, 21, 26, 26]],
+  "masks": [[3, 4, 5], [0, 1, 2]],
+  "anchors": [[44, 99], [92, 48], [124, 140], [171, 245], [292, 328], [509, 526]],
+  "obj_threshold": 0.6,
+  "nms_threshold": 0.5,
+  "num_classes": 2
+}

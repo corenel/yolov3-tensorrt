@@ -61,6 +61,8 @@ from onnx import TensorProto
 import numpy as np
 
 import sys
+import json
+import click
 
 
 class DarkNetParser(object):
@@ -131,7 +133,11 @@ class DarkNetParser(object):
         if remainder.replace(' ', '')[0] == '#':
             remainder = remainder.split('\n', 1)[1]
 
-        layer_param_block, remainder = remainder.split('\n\n', 1)
+        try:
+            layer_param_block, remainder = remainder.split('\n\n', 1)
+        except:
+            layer_param_block = remainder.split('\n\n', 1)[0]
+            remainder = ''
         layer_param_lines = layer_param_block.split('\n')[1:]
         layer_name = str(self.layer_counter).zfill(3) + '_' + layer_type
         layer_dict = dict(type=layer_type)
@@ -159,7 +165,8 @@ class DarkNetParser(object):
             for index in param_value_raw.split(','):
                 layer_indexes.append(int(index))
             param_value = layer_indexes
-        elif isinstance(param_value_raw, str) and not param_value_raw.isalpha():
+        elif isinstance(param_value_raw,
+                        str) and not param_value_raw.isalpha():
             condition_param_value_positive = param_value_raw.isdigit()
             condition_param_value_negative = param_value_raw[0] == '-' and \
                 param_value_raw[1:].isdigit()
@@ -268,7 +275,7 @@ class WeightLoader(object):
         self.weights_file = self._open_weights_file(weights_file_path)
 
     def load_upsample_scales(self, upsample_params):
-        """Returns the initializers with the value of the scale input 
+        """Returns the initializers with the value of the scale input
         tensor given by upsample_params.
 
         Keyword argument:
@@ -442,7 +449,7 @@ class GraphBuilderONNX(object):
                 inputs.extend(inputs_layer)
         del weight_loader
         self.graph_def = helper.make_graph(nodes=self._nodes,
-                                           name='YOLOv3-608',
+                                           name='TinyYOLOv3-416',
                                            inputs=inputs,
                                            outputs=outputs,
                                            initializer=initializer)
@@ -476,6 +483,7 @@ class GraphBuilderONNX(object):
             node_creators['shortcut'] = self._make_shortcut_node
             node_creators['route'] = self._make_route_node
             node_creators['upsample'] = self._make_upsample_node
+            node_creators['maxpool'] = self._make_maxpool_node
 
             if layer_type in node_creators.keys():
                 major_node_output_name, major_node_output_channels = \
@@ -704,6 +712,35 @@ class GraphBuilderONNX(object):
         self.param_dict[layer_name] = upsample_params
         return layer_name, channels
 
+    def _make_maxpool_node(self, layer_name, layer_dict):
+        """Create an ONNX Add node with the maxpool properties from
+        the DarkNet-based graph.
+
+        Keyword arguments:
+        layer_name -- the layer's name (also the corresponding key in layer_configs)
+        layer_dict -- a layer parameter dictionary (one element of layer_configs)
+        """
+        maxpool_size = layer_dict['size']
+        maxpool_stride = layer_dict['stride']
+
+        previous_node_specs = self._get_previous_node_specs()
+        inputs = [previous_node_specs.name]
+        channels = previous_node_specs.channels
+        assert channels > 0
+
+        maxpool_node = helper.make_node(
+            'MaxPool',
+            inputs=inputs,
+            outputs=[layer_name],
+            kernel_shape=[maxpool_size, maxpool_size],
+            strides=[maxpool_stride, maxpool_stride],
+            auto_pad='SAME_UPPER',
+            name=layer_name,
+        )
+        self._nodes.append(maxpool_node)
+
+        return layer_name, channels
+
 
 def generate_md5_checksum(local_path):
     """Returns the MD5 checksum of a local file.
@@ -739,52 +776,46 @@ def download_file(local_path, link, checksum_reference=None):
     return local_path
 
 
-def main():
-    """Run the DarkNet-to-ONNX conversion for YOLOv3-608."""
+@click.command()
+@click.argument('config_path', required=True, type=click.Path(exists=True))
+def main(config_path):
+    """Run the DarkNet-to-ONNX conversion for YOLOv3."""
     # Have to use python 2 due to hashlib compatibility
     if sys.version_info[0] > 2:
         raise Exception(
             "This script is only compatible with python2, please re-run this script with python2. The rest of this sample can be run with either version of python."
         )
 
-    # Download the config for YOLOv3 if not present yet, and analyze the checksum:
-    cfg_file_path = download_file(
-        'yolov3.cfg',
-        'https://raw.githubusercontent.com/pjreddie/darknet/f86901f6177dfc6116360a13cc06ab680e0c86b0/cfg/yolov3.cfg',
-        'b969a43a848bbf26901643b833cfb96c')
+    # Load config
+    with open(config_path) as f:
+        model_config = json.load(f)
 
     # These are the only layers DarkNetParser will extract parameters from. The three layers of
     # type 'yolo' are not parsed in detail because they are included in the post-processing later:
-    supported_layers = ['net', 'convolutional', 'shortcut', 'route', 'upsample']
+    supported_layers = [
+        'net', 'convolutional', 'shortcut', 'route', 'upsample', 'maxpool'
+    ]
 
     # Create a DarkNetParser object, and the use it to generate an OrderedDict with all
     # layer's configs from the cfg file:
     parser = DarkNetParser(supported_layers)
-    layer_configs = parser.parse_cfg_file(cfg_file_path)
+    layer_configs = parser.parse_cfg_file(model_config['cfg_file_path'])
     # We do not need the parser anymore after we got layer_configs:
     del parser
 
     # In above layer_config, there are three outputs that we need to know the output
     # shape of (in CHW format):
-    output_tensor_dims = OrderedDict()
-    output_tensor_dims['082_convolutional'] = [255, 19, 19]
-    output_tensor_dims['094_convolutional'] = [255, 38, 38]
-    output_tensor_dims['106_convolutional'] = [255, 76, 76]
+    output_tensor_dims = OrderedDict(
+        sorted(model_config['output_tensor_dims'].items()))
 
     # Create a GraphBuilderONNX object with the known output tensor dimensions:
     builder = GraphBuilderONNX(output_tensor_dims)
-
-    # We want to populate our network with weights later, that's why we download those from
-    # the official mirror (and verify the checksum):
-    weights_file_path = download_file(
-        'yolov3.weights', 'https://pjreddie.com/media/files/yolov3.weights',
-        'c84e5b99d0e52cd466ae710cadf6d84c')
 
     # Now generate an ONNX graph with weights from the previously parsed layer configurations
     # and the weights file:
     yolov3_model_def = builder.build_onnx_graph(
         layer_configs=layer_configs,
-        weights_file_path=weights_file_path,
+        weights_file_path=model_config['weights_file_path'],
         verbose=True)
     # Once we have the model definition, we do not need the builder anymore:
     del builder
@@ -793,8 +824,7 @@ def main():
     onnx.checker.check_model(yolov3_model_def)
 
     # Serialize the generated ONNX graph to this file:
-    output_file_path = 'yolov3.onnx'
-    onnx.save(yolov3_model_def, output_file_path)
+    onnx.save(yolov3_model_def, model_config['onnx_file_path'])
 
 
 if __name__ == '__main__':

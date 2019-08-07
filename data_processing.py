@@ -62,15 +62,6 @@ def load_label_categories(label_file_path):
     return categories
 
 
-LABEL_FILE_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)),
-                               'coco_labels.txt')
-ALL_CATEGORIES = load_label_categories(LABEL_FILE_PATH)
-
-# Let's make sure that there are 80 classes, as expected for the COCO data set:
-CATEGORY_NUM = len(ALL_CATEGORIES)
-assert CATEGORY_NUM == 80
-
-
 class PreprocessYOLO(object):
     """A simple class for loading images with PIL and reshaping them to the specified
     input resolution for YOLOv3-608.
@@ -111,7 +102,8 @@ class PreprocessYOLO(object):
         # convention (width, height) in PIL:
         new_resolution = (self.yolo_input_resolution[1],
                           self.yolo_input_resolution[0])
-        image_resized = image_raw.resize(new_resolution, resample=Image.BICUBIC)
+        image_resized = image_raw.resize(new_resolution,
+                                         resample=Image.BICUBIC)
         image_resized = np.array(image_resized, dtype=np.float32, order='C')
         return image_raw, image_resized
 
@@ -137,7 +129,7 @@ class PostprocessYOLO(object):
     """Class for post-processing the three outputs tensors from YOLOv3-608."""
 
     def __init__(self, yolo_masks, yolo_anchors, obj_threshold, nms_threshold,
-                 yolo_input_resolution):
+                 yolo_input_resolution, yolo_num_classes):
         """Initialize with all values that will be kept when processing several frames.
         Assuming 3 outputs of the network in the case of (large) YOLOv3.
 
@@ -155,6 +147,7 @@ class PostprocessYOLO(object):
         self.object_threshold = obj_threshold
         self.nms_threshold = nms_threshold
         self.input_resolution_yolo = yolo_input_resolution
+        self.num_classes = yolo_num_classes
 
     def process(self, outputs, resolution_raw):
         """Take the YOLOv3 outputs generated from a TensorRT forward pass, post-process them
@@ -186,7 +179,7 @@ class PostprocessYOLO(object):
         dim1, dim2 = height, width
         dim3 = 3
         # There are CATEGORY_NUM=80 object categories:
-        dim4 = (4 + 1 + CATEGORY_NUM)
+        dim4 = (4 + 1 + self.num_classes)
         return np.reshape(output, (dim1, dim2, dim3, dim4))
 
     def _process_yolo_output(self, outputs_reshaped, resolution_raw):
