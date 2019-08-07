@@ -5,6 +5,7 @@
 *.trt
 *.jpg
 *.png
+*.names
 
 ### Python template
 # Byte-compiled / optimized / DLL files

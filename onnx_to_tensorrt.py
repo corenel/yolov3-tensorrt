@@ -60,9 +60,11 @@ from PIL import ImageDraw
 from yolov3_to_onnx import download_file
 from data_processing import PreprocessYOLO, PostprocessYOLO, load_label_categories
 
-import sys, os
+import sys
+import os
 import json
 import common
+import click
 
 TRT_LOGGER = trt.Logger()
 
@@ -105,7 +107,10 @@ def draw_bboxes(image_raw,
     return image_raw
 
 
-def get_engine(onnx_file_path, engine_file_path=""):
+def get_engine(onnx_file_path,
+               engine_file_path="",
+               fp16_mode=False,
+               overwrite=False):
     """Attempts to load a serialized engine if available, otherwise builds a new TensorRT engine and saves it."""
 
     def build_engine():
@@ -114,7 +119,9 @@ def get_engine(onnx_file_path, engine_file_path=""):
         ) as network, trt.OnnxParser(network, TRT_LOGGER) as parser:
             builder.max_workspace_size = 1 << 28  # 256MB
             builder.max_batch_size = 1
-            builder.fp16_mode = True
+            if fp16_mode:
+                print('Using FP16 mode')
+                builder.fp16_mode = True
             # Parse model file
             if not os.path.exists(onnx_file_path):
                 print(
@@ -132,9 +139,11 @@ def get_engine(onnx_file_path, engine_file_path=""):
             print("Completed creating Engine")
             with open(engine_file_path, "wb") as f:
                 f.write(engine.serialize())
+            print(
+                'Saving TensorRT file to path {}...'.format(engine_file_path))
             return engine
 
-    if os.path.exists(engine_file_path):
+    if os.path.exists(engine_file_path) and not overwrite:
         # If a serialized engine exists, use it instead of building an engine.
         print("Reading engine from file {}".format(engine_file_path))
         with open(engine_file_path,
@@ -144,19 +153,27 @@ def get_engine(onnx_file_path, engine_file_path=""):
         return build_engine()
 
 
-def main():
+@click.command()
+@click.argument('config_path', required=True, type=click.Path(exists=True))
+@click.option('-i', '--input-image', type=click.Path(exists=True))
+def main(config_path, input_image):
     """Create a TensorRT engine for ONNX-based YOLOv3-608 and run inference."""
 
     # Load config
-    with open('config/yolov3-tiny-gauge.json') as f:
+    with open(config_path) as f:
         model_config = json.load(f)
 
-    input_image_path = 'meter_00008.jpg'
+    if input_image is None:
+        get_engine(model_config['onnx_file_path'],
+                   model_config['trt_file_path'],
+                   model_config['trt_fp16_mode'],
+                   overwrite=True)
+        return
 
     # Create a pre-processor object by specifying the required input resolution for YOLOv3
     preprocessor = PreprocessYOLO(model_config['input_resolution'])
     # Load an image from the specified input path, and return it together with  a pre-processed version
-    image_raw, image = preprocessor.process(input_image_path)
+    image_raw, image = preprocessor.process(input_image)
     # Store the shape of the original input image in WH format, we will need it for later
     shape_orig_WH = image_raw.size
 
@@ -164,12 +181,14 @@ def main():
     output_shapes = model_config['output_shapes']
     # Do inference with TensorRT
     trt_outputs = []
-    with get_engine(model_config['onnx_file_path'],
-                    model_config['trt_file_path']
-                   ) as engine, engine.create_execution_context() as context:
+    with get_engine(
+            model_config['onnx_file_path'],
+            model_config['trt_file_path'],
+            model_config['trt_fp16_mode'],
+    ) as engine, engine.create_execution_context() as context:
         inputs, outputs, bindings, stream = common.allocate_buffers(engine)
         # Do inference
-        print('Running inference on image {}...'.format(input_image_path))
+        print('Running inference on image {}...'.format(input_image))
         # Set host input to the image. The common.do_inference function will copy the input to the GPU before executing.
         inputs[0].host = image
         trt_outputs = common.do_inference(context,
@@ -192,7 +211,8 @@ def main():
         "obj_threshold": model_config['obj_threshold'],
         # Threshold for non-max suppression algorithm, float value between 0 and 1
         "nms_threshold": model_config['nms_threshold'],
-        "yolo_input_resolution": model_config['input_resolution']
+        "yolo_input_resolution": model_config['input_resolution'],
+        "yolo_num_classes": model_config['num_classes']
     }
 
     postprocessor = PostprocessYOLO(**postprocessor_args)
@@ -207,7 +227,7 @@ def main():
     # Draw the bounding boxes onto the original input image and save it as a PNG file
     obj_detected_img = draw_bboxes(image_raw, boxes, scores, classes,
                                    all_categories)
-    output_image_path = 'dog_bboxes.png'
+    output_image_path = os.path.splitext(input_image)[0] + '_result.png'
     obj_detected_img.save(output_image_path, 'PNG')
     print('Saved image with bounding boxes of detected objects to {}.'.format(
         output_image_path))

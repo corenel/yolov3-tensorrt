@@ -62,6 +62,7 @@ import numpy as np
 
 import sys
 import json
+import click
 
 
 class DarkNetParser(object):
@@ -775,8 +776,10 @@ def download_file(local_path, link, checksum_reference=None):
     return local_path
 
 
-def main():
-    """Run the DarkNet-to-ONNX conversion for YOLOv3-608."""
+@click.command()
+@click.argument('config_path', required=True, type=click.Path(exists=True))
+def main(config_path):
+    """Run the DarkNet-to-ONNX conversion for YOLOv3."""
     # Have to use python 2 due to hashlib compatibility
     if sys.version_info[0] > 2:
         raise Exception(
@@ -784,7 +787,7 @@ def main():
         )
 
     # Load config
-    with open('config/yolov3-tiny-gauge.json') as f:
+    with open(config_path) as f:
         model_config = json.load(f)
 
     # These are the only layers DarkNetParser will extract parameters from. The three layers of
