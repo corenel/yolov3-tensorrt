@@ -163,7 +163,8 @@ class DarkNetParser(object):
             for index in param_value_raw.split(','):
                 layer_indexes.append(int(index))
             param_value = layer_indexes
-        elif isinstance(param_value_raw, str) and not param_value_raw.isalpha():
+        elif isinstance(param_value_raw,
+                        str) and not param_value_raw.isalpha():
             condition_param_value_positive = param_value_raw.isdigit()
             condition_param_value_negative = param_value_raw[0] == '-' and \
                 param_value_raw[1:].isdigit()
@@ -272,7 +273,7 @@ class WeightLoader(object):
         self.weights_file = self._open_weights_file(weights_file_path)
 
     def load_upsample_scales(self, upsample_params):
-        """Returns the initializers with the value of the scale input 
+        """Returns the initializers with the value of the scale input
         tensor given by upsample_params.
 
         Keyword argument:
@@ -480,6 +481,7 @@ class GraphBuilderONNX(object):
             node_creators['shortcut'] = self._make_shortcut_node
             node_creators['route'] = self._make_route_node
             node_creators['upsample'] = self._make_upsample_node
+            node_creators['maxpool'] = self._make_maxpool_node
 
             if layer_type in node_creators.keys():
                 major_node_output_name, major_node_output_channels = \
@@ -708,6 +710,35 @@ class GraphBuilderONNX(object):
         self.param_dict[layer_name] = upsample_params
         return layer_name, channels
 
+    def _make_maxpool_node(self, layer_name, layer_dict):
+        """Create an ONNX Add node with the maxpool properties from
+        the DarkNet-based graph.
+
+        Keyword arguments:
+        layer_name -- the layer's name (also the corresponding key in layer_configs)
+        layer_dict -- a layer parameter dictionary (one element of layer_configs)
+        """
+        maxpool_size = layer_dict['size']
+        maxpool_stride = layer_dict['stride']
+
+        previous_node_specs = self._get_previous_node_specs()
+        inputs = [previous_node_specs.name]
+        channels = previous_node_specs.channels
+        assert channels > 0
+
+        maxpool_node = helper.make_node(
+            'MaxPool',
+            inputs=inputs,
+            outputs=[layer_name],
+            kernel_shape=[maxpool_size, maxpool_size],
+            strides=[maxpool_stride, maxpool_stride],
+            auto_pad='SAME_UPPER',
+            name=layer_name,
+        )
+        self._nodes.append(maxpool_node)
+
+        return layer_name, channels
+
 
 def generate_md5_checksum(local_path):
     """Returns the MD5 checksum of a local file.
@@ -754,18 +785,19 @@ def main():
     # Download the config for YOLOv3 if not present yet, and analyze the checksum:
     cfg_file_path = download_file(
         'yolov3-tiny.cfg',
-        'https://raw.githubusercontent.com/pjreddie/darknet/master/cfg/yolov3-tiny.cfg')
+        'https://raw.githubusercontent.com/pjreddie/darknet/master/cfg/yolov3-tiny.cfg'
+    )
 
     # These are the only layers DarkNetParser will extract parameters from. The three layers of
     # type 'yolo' are not parsed in detail because they are included in the post-processing later:
-    supported_layers = ['net', 'convolutional', 'shortcut', 'route', 'upsample']
+    supported_layers = [
+        'net', 'convolutional', 'shortcut', 'route', 'upsample', 'maxpool'
+    ]
 
     # Create a DarkNetParser object, and the use it to generate an OrderedDict with all
     # layer's configs from the cfg file:
     parser = DarkNetParser(supported_layers)
     layer_configs = parser.parse_cfg_file(cfg_file_path)
-    for layer in layer_configs:
-        print(layer)
     # We do not need the parser anymore after we got layer_configs:
     del parser
 
@@ -781,7 +813,8 @@ def main():
     # We want to populate our network with weights later, that's why we download those from
     # the official mirror (and verify the checksum):
     weights_file_path = download_file(
-        'yolov3-tiny.weights', 'https://pjreddie.com/media/files/yolov3-tiny.weights')
+        'yolov3-tiny.weights',
+        'https://pjreddie.com/media/files/yolov3-tiny.weights')
 
     # Now generate an ONNX graph with weights from the previously parsed layer configurations
     # and the weights file:
