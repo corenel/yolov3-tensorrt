@@ -49,6 +49,7 @@
 #
 
 from __future__ import print_function
+from collections import OrderedDict
 
 import numpy as np
 import tensorrt as trt
@@ -57,9 +58,10 @@ import pycuda.autoinit
 from PIL import ImageDraw
 
 from yolov3_to_onnx import download_file
-from data_processing import PreprocessYOLO, PostprocessYOLO, ALL_CATEGORIES
+from data_processing import PreprocessYOLO, PostprocessYOLO, load_label_categories
 
 import sys, os
+import json
 import common
 
 TRT_LOGGER = trt.Logger()
@@ -145,29 +147,25 @@ def get_engine(onnx_file_path, engine_file_path=""):
 def main():
     """Create a TensorRT engine for ONNX-based YOLOv3-608 and run inference."""
 
-    # Try to load a previously generated YOLOv3-608 network graph in ONNX format:
-    onnx_file_path = 'yolov3-tiny.onnx'
-    engine_file_path = "yolov3-tiny.trt"
-    # Download a dog image and save it to the following file path:
-    input_image_path = download_file(
-        'dog.jpg',
-        'https://github.com/pjreddie/darknet/raw/f86901f6177dfc6116360a13cc06ab680e0c86b0/data/dog.jpg',
-        checksum_reference=None)
+    # Load config
+    with open('config/yolov3-tiny-gauge.json') as f:
+        model_config = json.load(f)
 
-    # Two-dimensional tuple with the target network's (spatial) input resolution in HW ordered
-    input_resolution_yolov3_HW = (416, 416)
+    input_image_path = 'meter_00008.jpg'
+
     # Create a pre-processor object by specifying the required input resolution for YOLOv3
-    preprocessor = PreprocessYOLO(input_resolution_yolov3_HW)
+    preprocessor = PreprocessYOLO(model_config['input_resolution'])
     # Load an image from the specified input path, and return it together with  a pre-processed version
     image_raw, image = preprocessor.process(input_image_path)
     # Store the shape of the original input image in WH format, we will need it for later
     shape_orig_WH = image_raw.size
 
     # Output shapes expected by the post-processor
-    output_shapes = [(1, 255, 13, 13), (1, 255, 26, 26)]
+    output_shapes = model_config['output_shapes']
     # Do inference with TensorRT
     trt_outputs = []
-    with get_engine(onnx_file_path, engine_file_path
+    with get_engine(model_config['onnx_file_path'],
+                    model_config['trt_file_path']
                    ) as engine, engine.create_execution_context() as context:
         inputs, outputs, bindings, stream = common.allocate_buffers(engine)
         # Do inference
@@ -187,16 +185,14 @@ def main():
     ]
 
     postprocessor_args = {
-        "yolo_masks": [
-            (3, 4, 5), (1, 2, 3)
-        ],  # A list of 3 three-dimensional tuples for the YOLO masks
-        "yolo_anchors": [(10, 14), (23, 27), (37, 58), (81, 82), (135, 169),
-                         (344, 319)],
-        "obj_threshold":
-            0.6,  # Threshold for object coverage, float value between 0 and 1
-        "nms_threshold":
-            0.5,  # Threshold for non-max suppression algorithm, float value between 0 and 1
-        "yolo_input_resolution": input_resolution_yolov3_HW
+        # A list of 3 three-dimensional tuples for the YOLO masks
+        "yolo_masks": model_config['masks'],
+        "yolo_anchors": model_config['anchors'],
+        # Threshold for object coverage, float value between 0 and 1
+        "obj_threshold": model_config['obj_threshold'],
+        # Threshold for non-max suppression algorithm, float value between 0 and 1
+        "nms_threshold": model_config['nms_threshold'],
+        "yolo_input_resolution": model_config['input_resolution']
     }
 
     postprocessor = PostprocessYOLO(**postprocessor_args)
@@ -204,9 +200,13 @@ def main():
     # Run the post-processing algorithms on the TensorRT outputs and get the bounding box details of detected objects
     boxes, classes, scores = postprocessor.process(trt_outputs,
                                                    (shape_orig_WH))
+    # Let's make sure that there are 80 classes, as expected for the COCO data set:
+    all_categories = load_label_categories(model_config['label_file_path'])
+    assert len(all_categories) == model_config['num_classes']
+
     # Draw the bounding boxes onto the original input image and save it as a PNG file
     obj_detected_img = draw_bboxes(image_raw, boxes, scores, classes,
-                                   ALL_CATEGORIES)
+                                   all_categories)
     output_image_path = 'dog_bboxes.png'
     obj_detected_img.save(output_image_path, 'PNG')
     print('Saved image with bounding boxes of detected objects to {}.'.format(

@@ -1,0 +1,21 @@
+{
+  "cfg_file_path": "yolov3.cfg",
+  "weights_file_path": "model/yolov3.weights",
+  "onnx_file_path": "model/yolov3.onnx",
+  "trt_file_path": "model/yolov3.trt",
+  "trt_fp16_mode": true,
+  "label_file_path": "model/coco.names",
+  "input_resolution": [608, 608],
+  "output_tensor_dims": {
+    "082_convolutional": [255, 19, 19],
+    "094_convolutional": [255, 38, 38],
+    "106_convolutional": [255, 76, 76]
+  },
+  "output_shapes": [[1, 255, 19, 19], [1, 255, 38, 38], [1, 255, 76, 76]],
+  "masks": [[6, 7, 8], [3, 4, 5], [0, 1, 2]],
+  "anchors": [[10, 13], [16, 30], [33, 23], [30, 61], [62, 45], [59, 119], [116, 98], [156, 198], [373, 326]],
+  "obj_threshold": 0.6,
+  "nms_threshold": 0.5,
+  "num_classes": 80
+}
+

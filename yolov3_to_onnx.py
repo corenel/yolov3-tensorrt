@@ -61,6 +61,7 @@ from onnx import TensorProto
 import numpy as np
 
 import sys
+import json
 
 
 class DarkNetParser(object):
@@ -782,11 +783,9 @@ def main():
             "This script is only compatible with python2, please re-run this script with python2. The rest of this sample can be run with either version of python."
         )
 
-    # Download the config for YOLOv3 if not present yet, and analyze the checksum:
-    cfg_file_path = download_file(
-        'yolov3-tiny.cfg',
-        'https://raw.githubusercontent.com/pjreddie/darknet/master/cfg/yolov3-tiny.cfg'
-    )
+    # Load config
+    with open('config/yolov3-tiny-gauge.json') as f:
+        model_config = json.load(f)
 
     # These are the only layers DarkNetParser will extract parameters from. The three layers of
     # type 'yolo' are not parsed in detail because they are included in the post-processing later:
@@ -797,30 +796,23 @@ def main():
     # Create a DarkNetParser object, and the use it to generate an OrderedDict with all
     # layer's configs from the cfg file:
     parser = DarkNetParser(supported_layers)
-    layer_configs = parser.parse_cfg_file(cfg_file_path)
+    layer_configs = parser.parse_cfg_file(model_config['cfg_file_path'])
     # We do not need the parser anymore after we got layer_configs:
     del parser
 
     # In above layer_config, there are three outputs that we need to know the output
     # shape of (in CHW format):
-    output_tensor_dims = OrderedDict()
-    output_tensor_dims['016_convolutional'] = [255, 13, 13]
-    output_tensor_dims['023_convolutional'] = [255, 26, 26]
+    output_tensor_dims = OrderedDict(
+        sorted(model_config['output_tensor_dims'].items()))
 
     # Create a GraphBuilderONNX object with the known output tensor dimensions:
     builder = GraphBuilderONNX(output_tensor_dims)
-
-    # We want to populate our network with weights later, that's why we download those from
-    # the official mirror (and verify the checksum):
-    weights_file_path = download_file(
-        'yolov3-tiny.weights',
-        'https://pjreddie.com/media/files/yolov3-tiny.weights')
 
     # Now generate an ONNX graph with weights from the previously parsed layer configurations
     # and the weights file:
     yolov3_model_def = builder.build_onnx_graph(
         layer_configs=layer_configs,
-        weights_file_path=weights_file_path,
+        weights_file_path=model_config['weights_file_path'],
         verbose=True)
     # Once we have the model definition, we do not need the builder anymore:
     del builder
@@ -829,8 +821,7 @@ def main():
     onnx.checker.check_model(yolov3_model_def)
 
     # Serialize the generated ONNX graph to this file:
-    output_file_path = 'yolov3-tiny.onnx'
-    onnx.save(yolov3_model_def, output_file_path)
+    onnx.save(yolov3_model_def, model_config['onnx_file_path'])
 
 
 if __name__ == '__main__':

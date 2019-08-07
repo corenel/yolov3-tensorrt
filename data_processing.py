@@ -62,15 +62,6 @@ def load_label_categories(label_file_path):
     return categories
 
 
-LABEL_FILE_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)),
-                               'coco_labels.txt')
-ALL_CATEGORIES = load_label_categories(LABEL_FILE_PATH)
-
-# Let's make sure that there are 80 classes, as expected for the COCO data set:
-CATEGORY_NUM = len(ALL_CATEGORIES)
-assert CATEGORY_NUM == 80
-
-
 class PreprocessYOLO(object):
     """A simple class for loading images with PIL and reshaping them to the specified
     input resolution for YOLOv3-608.
@@ -111,7 +102,8 @@ class PreprocessYOLO(object):
         # convention (width, height) in PIL:
         new_resolution = (self.yolo_input_resolution[1],
                           self.yolo_input_resolution[0])
-        image_resized = image_raw.resize(new_resolution, resample=Image.BICUBIC)
+        image_resized = image_raw.resize(new_resolution,
+                                         resample=Image.BICUBIC)
         image_resized = np.array(image_resized, dtype=np.float32, order='C')
         return image_raw, image_resized
 
