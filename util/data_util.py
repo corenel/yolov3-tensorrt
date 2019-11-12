@@ -355,3 +355,33 @@ class PostprocessYOLO(object):
 #############
 # ONNX Part #
 #############
+
+
+def letterbox_image(image, size):
+    '''resize image with unchanged aspect ratio using padding'''
+    iw, ih = image.size
+    w, h = size
+    scale = min(w / iw, h / ih)
+    nw = int(iw * scale)
+    nh = int(ih * scale)
+
+    image = image.resize((nw, nh), Image.BICUBIC)
+    new_image = Image.new('RGB', size, (128, 128, 128))
+    new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
+    return new_image
+
+
+def prepare_data(image, model_image_size=(None, None)):
+    if model_image_size != (None, None):
+        assert model_image_size[0] % 32 == 0, 'Multiples of 32 required'
+        assert model_image_size[1] % 32 == 0, 'Multiples of 32 required'
+        boxed_image = letterbox_image(image, tuple(reversed(model_image_size)))
+    else:
+        new_image_size = (image.width - (image.width % 32),
+                          image.height - (image.height % 32))
+        boxed_image = letterbox_image(image, new_image_size)
+    image_data = np.array(boxed_image, dtype='float32')
+    image_data /= 255.
+    image_data = np.expand_dims(image_data, 0)  # Add batch dimension.
+    image_data_onnx = np.transpose(image_data, [0, 3, 1, 2])
+    return image_data_onnx

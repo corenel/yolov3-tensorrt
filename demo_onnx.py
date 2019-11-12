@@ -1,11 +1,15 @@
 from __future__ import print_function
 
-import click
-import numpy as np
-import onnxruntime
-from PIL import Image, ImageDraw
+import json
+import os
 
-from util.data_util import load_label_categories
+import click
+import onnxruntime
+from PIL import Image
+
+from util import data_util
+from util.data_util import PreprocessYOLO, PostprocessYOLO
+from util.timer import Timer
 
 
 @click.command()
@@ -15,55 +19,63 @@ from util.data_util import load_label_categories
               required=True,
               type=click.Path(exists=True))
 def main(config_path, input_image):
+    # Load config
+    with open(config_path) as f:
+        model_config = json.load(f)
 
-    image = Image.open(input_image)
-    image_data_onnx = prepare_data(
-        image, model_image_size=model_config['input_resolution'])
-    feed_f = dict(
-        zip(['input_1', 'image_shape'],
-            (image_data_onnx,
-             np.array([image.size[1], image.size[0]], dtype='float32').reshape(
-                 1, 2))))
+    # initialize timer
+    t = Timer()
+
+    # load model
     yolo_session = onnxruntime.InferenceSession(model_config['onnx_file_path'])
-    all_boxes, all_scores, indices = yolo_session.run(None, input_feed=feed_f)
+    t.log_and_restart('load model')
 
-    out_boxes, out_scores, out_classes = [], [], []
-    for idx_ in indices[0]:
-        out_classes.append(idx_[1])
-        out_scores.append(all_scores[tuple(idx_)])
-        idx_1 = (idx_[0], idx_[2])
-        out_boxes.append(all_boxes[idx_1])
+    # prepare input
+    # Create a pre-processor object by specifying the required input resolution for YOLOv3
+    preprocessor = PreprocessYOLO(model_config['input_resolution'])
+    # Load an image from the specified input path, and return it together with  a pre-processed version
+    image_raw, image = preprocessor.process(input_image)
+    # Store the shape of the original input image in WH format, we will need it for later
+    shape_orig_WH = image_raw.size
+    t.log_and_restart('pre-process')
 
-    thickness = (image.size[0] + image.size[1]) // 300
-    all_categories = load_label_categories(model_config['label_file_path'])
-    for i, c in reversed(list(enumerate(out_classes))):
-        predicted_class = all_categories[c]
-        box = out_boxes[i]
-        score = out_scores[i]
+    # do inference
+    input_name = yolo_session.get_inputs()[0].name
+    onnx_outputs = yolo_session.run(None, input_feed={input_name: image})
+    t.log_and_restart('inference')
 
-        label = '{} {:.2f}'.format(predicted_class, score)
-        draw = ImageDraw.Draw(image)
-        label_size = draw.textsize(label)
+    postprocessor_args = {
+        # A list of 3 three-dimensional tuples for the YOLO masks
+        "yolo_masks": model_config['masks'],
+        "yolo_anchors": model_config['anchors'],
+        # Threshold for object coverage, float value between 0 and 1
+        "obj_threshold": model_config['obj_threshold'],
+        # Threshold for non-max suppression algorithm, float value between 0 and 1
+        "nms_threshold": model_config['nms_threshold'],
+        "yolo_input_resolution": model_config['input_resolution'],
+        "yolo_num_classes": model_config['num_classes']
+    }
+    postprocessor = PostprocessYOLO(**postprocessor_args)
+    # Run the post-processing algorithms on the TensorRT outputs and get the bounding box details of detected objects
+    boxes, classes, scores = postprocessor.process(onnx_outputs,
+                                                   (shape_orig_WH))
+    t.log_and_restart('post-process')
 
-        top, left, bottom, right = box
-        top = max(0, np.floor(top + 0.5).astype('int32'))
-        left = max(0, np.floor(left + 0.5).astype('int32'))
-        bottom = min(image.size[1], np.floor(bottom + 0.5).astype('int32'))
-        right = min(image.size[0], np.floor(right + 0.5).astype('int32'))
+    # Let's make sure that there are 80 classes, as expected for the COCO data set:
+    all_categories = data_util.load_label_categories(
+        model_config['label_file_path'])
+    assert len(all_categories) == model_config['num_classes']
 
-        if top - label_size[1] >= 0:
-            text_origin = np.array([left, top - label_size[1]])
-        else:
-            text_origin = np.array([left, top + 1])
+    # Draw the bounding boxes onto the original input image and save it as a PNG file
+    obj_detected_img = data_util.draw_bboxes(image_raw, boxes, scores, classes,
+                                             all_categories)
+    output_image_path = os.path.splitext(input_image)[0] + '_result.png'
+    obj_detected_img.save(output_image_path, 'PNG')
+    print('Saved image with bounding boxes of detected objects to {}.'.format(
+        output_image_path))
+    t.log_and_restart('visualize')
 
-        for i in range(thickness):
-            draw.rectangle([left + i, top + i, right - i, bottom - i],
-                           outline=self.colors[c])
-        draw.rectangle([tuple(text_origin),
-                        tuple(text_origin + label_size)],
-                       fill=self.colors[c])
-        draw.text(text_origin, label, fill=(0, 0, 0), font=font)
-        del draw
+    t.print_log()
 
 
 if __name__ == '__main__':
