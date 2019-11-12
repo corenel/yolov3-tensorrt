@@ -1,5 +1,5 @@
 {
-  "cfg_file_path": "yolov3.cfg",
+  "cfg_file_path": "model/yolov3.cfg",
   "weights_file_path": "model/yolov3.weights",
   "onnx_file_path": "model/yolov3.onnx",
   "trt_file_path": "model/yolov3.trt",

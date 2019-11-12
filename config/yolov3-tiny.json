@@ -1,5 +1,5 @@
 {
-  "cfg_file_path": "yolov3-tiny.cfg",
+  "cfg_file_path": "model/yolov3-tiny.cfg",
   "weights_file_path": "model/yolov3-tiny.weights",
   "onnx_file_path": "model/yolov3-tiny.onnx",
   "trt_file_path": "model/yolov3-tiny.trt",
