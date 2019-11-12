@@ -1,60 +1,7 @@
-#
-# Copyright 1993-2019 NVIDIA Corporation.  All rights reserved.
-#
-# NOTICE TO LICENSEE:
-#
-# This source code and/or documentation ("Licensed Deliverables") are
-# subject to NVIDIA intellectual property rights under U.S. and
-# international Copyright laws.
-#
-# These Licensed Deliverables contained herein is PROPRIETARY and
-# CONFIDENTIAL to NVIDIA and is being provided under the terms and
-# conditions of a form of NVIDIA software license agreement by and
-# between NVIDIA and Licensee ("License Agreement") or electronically
-# accepted by Licensee.  Notwithstanding any terms or conditions to
-# the contrary in the License Agreement, reproduction or disclosure
-# of the Licensed Deliverables to any third party without the express
-# written consent of NVIDIA is prohibited.
-#
-# NOTWITHSTANDING ANY TERMS OR CONDITIONS TO THE CONTRARY IN THE
-# LICENSE AGREEMENT, NVIDIA MAKES NO REPRESENTATION ABOUT THE
-# SUITABILITY OF THESE LICENSED DELIVERABLES FOR ANY PURPOSE.  IT IS
-# PROVIDED "AS IS" WITHOUT EXPRESS OR IMPLIED WARRANTY OF ANY KIND.
-# NVIDIA DISCLAIMS ALL WARRANTIES WITH REGARD TO THESE LICENSED
-# DELIVERABLES, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY,
-# NONINFRINGEMENT, AND FITNESS FOR A PARTICULAR PURPOSE.
-# NOTWITHSTANDING ANY TERMS OR CONDITIONS TO THE CONTRARY IN THE
-# LICENSE AGREEMENT, IN NO EVENT SHALL NVIDIA BE LIABLE FOR ANY
-# SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL DAMAGES, OR ANY
-# DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
-# WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS
-# ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE
-# OF THESE LICENSED DELIVERABLES.
-#
-# U.S. Government End Users.  These Licensed Deliverables are a
-# "commercial item" as that term is defined at 48 C.F.R. 2.101 (OCT
-# 1995), consisting of "commercial computer software" and "commercial
-# computer software documentation" as such terms are used in 48
-# C.F.R. 12.212 (SEPT 1995) and is provided to the U.S. Government
-# only as a commercial end item.  Consistent with 48 C.F.R.12.212 and
-# 48 C.F.R. 227.7202-1 through 227.7202-4 (JUNE 1995), all
-# U.S. Government End Users acquire the Licensed Deliverables with
-# only those rights set forth herein.
-#
-# Any use of the Licensed Deliverables in individual and commercial
-# software must include, in the user documentation and internal
-# comments to the code, the above Disclaimer and U.S. Government End
-# Users Notice.
-#
-
 import math
-from PIL import Image
-import numpy as np
-import os
 
-# YOLOv3-608 has been trained with these 80 categories from COCO:
-# Lin, Tsung-Yi, et al. "Microsoft COCO: Common Objects in Context."
-# European Conference on Computer Vision. Springer, Cham, 2014.
+import numpy as np
+from PIL import Image, ImageDraw
 
 
 def load_label_categories(label_file_path):
@@ -62,11 +9,54 @@ def load_label_categories(label_file_path):
     return categories
 
 
+def draw_bboxes(image_raw,
+                bboxes,
+                confidences,
+                categories,
+                all_categories,
+                bbox_color='blue'):
+    """
+    Draw the bounding boxes on the original input image and return it.
+
+    Keyword arguments:
+    image_raw -- a raw PIL Image
+    bboxes -- NumPy array containing the bounding box coordinates of N objects, with shape (N,4).
+    categories -- NumPy array containing the corresponding category for each object,
+    with shape (N,)
+    confidences -- NumPy array containing the corresponding confidence for each object,
+    with shape (N,)
+    all_categories -- a list of all categories in the correct ordered (required for looking up
+    the category name)
+    bbox_color -- an optional string specifying the color of the bounding boxes (default: 'blue')
+    """
+    draw = ImageDraw.Draw(image_raw)
+    print(bboxes, confidences, categories)
+    for box, score, category in zip(bboxes, confidences, categories):
+        x_coord, y_coord, width, height = box
+        left = max(0, np.floor(x_coord + 0.5).astype(int))
+        top = max(0, np.floor(y_coord + 0.5).astype(int))
+        right = min(image_raw.width,
+                    np.floor(x_coord + width + 0.5).astype(int))
+        bottom = min(image_raw.height,
+                     np.floor(y_coord + height + 0.5).astype(int))
+
+        draw.rectangle(((left, top), (right, bottom)), outline=bbox_color)
+        draw.text((left, top - 12),
+                  '{0} {1:.2f}'.format(all_categories[category], score),
+                  fill=bbox_color)
+
+    return image_raw
+
+
+#################
+# TensorRT Part #
+#################
+
+
 class PreprocessYOLO(object):
     """A simple class for loading images with PIL and reshaping them to the specified
     input resolution for YOLOv3-608.
     """
-
     def __init__(self, yolo_input_resolution):
         """Initialize with the input resolution for YOLOv3, which will stay fixed in this sample.
 
@@ -127,7 +117,6 @@ class PreprocessYOLO(object):
 
 class PostprocessYOLO(object):
     """Class for post-processing the three outputs tensors from YOLOv3-608."""
-
     def __init__(self, yolo_masks, yolo_anchors, obj_threshold, nms_threshold,
                  yolo_input_resolution, yolo_num_classes):
         """Initialize with all values that will be kept when processing several frames.
@@ -361,3 +350,8 @@ class PostprocessYOLO(object):
 
         keep = np.array(keep)
         return keep
+
+
+#############
+# ONNX Part #
+#############
