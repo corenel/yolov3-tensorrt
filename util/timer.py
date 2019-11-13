@@ -1,5 +1,5 @@
 import time
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 import pprint
 
 
@@ -17,6 +17,7 @@ class Timer(object):
         self.leftshift(left_shift)
         self._time_target = time_target
         self.log = OrderedDict()
+        self.counter = defaultdict(int)
 
     def restart(self):
         """
@@ -60,10 +61,12 @@ class Timer(object):
     def log_and_restart(self, text: str):
         # print(f'[{text}] {self.elapsed()}')
         self.log[text] = self.elapsed()
+        self.counter[text] += 1
         self.restart()
 
     def reset_log(self):
         self.log = OrderedDict()
+        self.counter = OrderedDict()
 
     def print_log(self):
         print()
@@ -72,5 +75,5 @@ class Timer(object):
         print('{:<20} {:<10}'.format('Item', 'Time (ms)'))
         print('-' * 30)
         for k, v in self.log.items():
-            print('{:<20} {:<10.2f}'.format(k, v * 1000))
+            print('{:<20} {:<10.2f}'.format(k, v * 1000 / self.counter[k]))
         print('-' * 30)

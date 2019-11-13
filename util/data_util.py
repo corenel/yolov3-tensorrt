@@ -1,5 +1,6 @@
 import math
 
+import cv2
 import numpy as np
 from PIL import Image, ImageDraw
 
@@ -31,19 +32,22 @@ def draw_bboxes(image_raw,
     """
     draw = ImageDraw.Draw(image_raw)
     print(bboxes, confidences, categories)
-    for box, score, category in zip(bboxes, confidences, categories):
-        x_coord, y_coord, width, height = box
-        left = max(0, np.floor(x_coord + 0.5).astype(int))
-        top = max(0, np.floor(y_coord + 0.5).astype(int))
-        right = min(image_raw.width,
-                    np.floor(x_coord + width + 0.5).astype(int))
-        bottom = min(image_raw.height,
-                     np.floor(y_coord + height + 0.5).astype(int))
+    if bboxes is None or confidences is None or categories is None:
+        pass
+    else:
+        for box, score, category in zip(bboxes, confidences, categories):
+            x_coord, y_coord, width, height = box
+            left = max(0, np.floor(x_coord + 0.5).astype(int))
+            top = max(0, np.floor(y_coord + 0.5).astype(int))
+            right = min(image_raw.width,
+                        np.floor(x_coord + width + 0.5).astype(int))
+            bottom = min(image_raw.height,
+                         np.floor(y_coord + height + 0.5).astype(int))
 
-        draw.rectangle(((left, top), (right, bottom)), outline=bbox_color)
-        draw.text((left, top - 12),
-                  '{0} {1:.2f}'.format(all_categories[category], score),
-                  fill=bbox_color)
+            draw.rectangle(((left, top), (right, bottom)), outline=bbox_color)
+            draw.text((left, top - 12),
+                      '{0} {1:.2f}'.format(all_categories[category], score),
+                      fill=bbox_color)
 
     return image_raw
 
@@ -87,7 +91,16 @@ class PreprocessYOLO(object):
         input_image_path -- string path of the image to be loaded
         """
 
-        image_raw = Image.open(input_image_path)
+        if isinstance(input_image_path, str):
+            image_raw = Image.open(input_image_path)
+        elif isinstance(input_image_path, np.ndarray):
+            input_image_path = cv2.cvtColor(input_image_path,
+                                            cv2.COLOR_BGR2RGB)
+            image_raw = Image.fromarray(input_image_path)
+        else:
+            raise NotImplementedError(
+                'Unsuppoerted input image type: {}'.format(
+                    type(input_image_path)))
         # Expecting yolo_input_resolution in (height, width) format, adjusting to PIL
         # convention (width, height) in PIL:
         new_resolution = (self.yolo_input_resolution[1],
