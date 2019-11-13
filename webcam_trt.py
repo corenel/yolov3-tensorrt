@@ -18,7 +18,7 @@ def gstreamer_pipeline(
         capture_height=720,
         display_width=1280,
         display_height=720,
-        framerate=30,
+        framerate=120,
         flip_method=0,
 ):
     return (
@@ -73,6 +73,10 @@ def main(config_path):
         postprocessor = PostprocessYOLO(**postprocessor_args)
         # Output shapes expected by the post-processor
         output_shapes = model_config['output_shapes']
+        # Let's make sure that there are 80 classes, as expected for the COCO data set:
+        all_categories = data_util.load_label_categories(
+            model_config['label_file_path'])
+        assert len(all_categories) == model_config['num_classes']
         # initialize enfine
         trt_outputs = []
         # Window
@@ -86,13 +90,16 @@ def main(config_path):
                 engine)
             while cv2.getWindowProperty("CSI Camera", 0) >= 0:
                 ret_val, input_image = cap.read()
+                input_image = cv2.cvtColor(input_image, cv2.COLOR_BGR2RGB)
                 if input_image is None:
                     break
+                t.log_and_restart('load frame')
 
                 # Load an image from the specified input path, and return it together with  a pre-processed version
                 image_raw, image = preprocessor.process(input_image)
-                # Store the shape of the original input image in WH format, we will need it for later
-                shape_orig_WH = image_raw.size
+                # Store the shape of the original input image in WH format,
+                # we will need it for later
+                orig_shape_wh = image_raw.shape[:2][::-1]
                 t.log_and_restart('pre-process')
 
                 # Do inference
@@ -104,6 +111,7 @@ def main(config_path):
                                                     inputs=inputs,
                                                     outputs=outputs,
                                                     stream=stream)
+                # pycuda.driver.Context.synchronize()
 
                 # Before doing post-processing, we need to reshape the outputs
                 # as the common.do_inference will give us flat arrays.
@@ -116,20 +124,19 @@ def main(config_path):
                 # Run the post-processing algorithms on the TensorRT outputs
                 # and get the bounding box details of detected objects
                 boxes, classes, scores = postprocessor.process(
-                    trt_outputs, (shape_orig_WH))
+                    trt_outputs, orig_shape_wh)
+                print(boxes, classes, scores)
                 t.log_and_restart('post-process')
 
-                # Let's make sure that there are 80 classes, as expected for the COCO data set:
-                all_categories = data_util.load_label_categories(
-                    model_config['label_file_path'])
-                assert len(all_categories) == model_config['num_classes']
-
                 # Draw the bounding boxes onto the original input image and save it as a PNG file
-                obj_detected_img = data_util.draw_bboxes(
-                    image_raw, boxes, scores, classes, all_categories)
-                t.log_and_restart('visualize')
+                # obj_detected_img = data_util.draw_bboxes(
+                #     image_raw, boxes, scores, classes, all_categories)
+                # t.log_and_restart('visualize')
 
-                img_to_display = np.array(obj_detected_img)
+                # img_to_display = np.array(obj_detected_img)
+                img_to_display = image_raw
+                img_to_display = cv2.cvtColor(img_to_display,
+                                              cv2.COLOR_RGB2BGR)
                 cv2.imshow("CSI Camera", img_to_display)
                 # This also acts as
                 keyCode = cv2.waitKey(30) & 0xFF

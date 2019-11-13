@@ -2,7 +2,10 @@ import math
 
 import cv2
 import numpy as np
+from scipy.special import expit
 from PIL import Image, ImageDraw
+
+COLORS = np.random.uniform(0, 255, size=(80, 3))
 
 
 def load_label_categories(label_file_path):
@@ -30,31 +33,44 @@ def draw_bboxes(image_raw,
     the category name)
     bbox_color -- an optional string specifying the color of the bounding boxes (default: 'blue')
     """
-    draw = ImageDraw.Draw(image_raw)
-    print(bboxes, confidences, categories)
-    if bboxes is None or confidences is None or categories is None:
-        pass
+    if isinstance(image_raw, Image.Image):
+        image_pil = image_raw
+        draw = ImageDraw.Draw(image_pil)
+        if bboxes is None or confidences is None or categories is None:
+            pass
+        else:
+            for box, score, category in zip(bboxes, confidences, categories):
+                x_coord, y_coord, width, height = box
+                left = max(0, np.floor(x_coord + 0.5).astype(int))
+                top = max(0, np.floor(y_coord + 0.5).astype(int))
+                right = min(image_pil.width,
+                            np.floor(x_coord + width + 0.5).astype(int))
+                bottom = min(image_pil.height,
+                             np.floor(y_coord + height + 0.5).astype(int))
+
+                draw.rectangle(((left, top), (right, bottom)),
+                               outline=bbox_color)
+                draw.text((left, top - 12),
+                          '{0} {1:.2f}'.format(all_categories[category],
+                                               score),
+                          fill=bbox_color)
+        return image_pil
+    elif isinstance(image_raw, np.ndarray):
+        for i, label in enumerate(categories):
+            if bbox_color is None:
+                color = COLORS[all_categories.index(label)]
+            else:
+                color = COLORS[all_categories.index(label)]
+            if False:
+                label += ' ' + str(format(confidences[i] * 100, '.2f')) + '%'
+            cv2.rectangle(image_raw, (bboxes[i][0], bboxes[i][1]),
+                          (bboxes[i][2], bboxes[i][3]), color, 2)
+            cv2.putText(image_raw, label, (bboxes[i][0], bboxes[i][1] - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        return image_raw
+
     else:
-        for box, score, category in zip(bboxes, confidences, categories):
-            x_coord, y_coord, width, height = box
-            left = max(0, np.floor(x_coord + 0.5).astype(int))
-            top = max(0, np.floor(y_coord + 0.5).astype(int))
-            right = min(image_raw.width,
-                        np.floor(x_coord + width + 0.5).astype(int))
-            bottom = min(image_raw.height,
-                         np.floor(y_coord + height + 0.5).astype(int))
-
-            draw.rectangle(((left, top), (right, bottom)), outline=bbox_color)
-            draw.text((left, top - 12),
-                      '{0} {1:.2f}'.format(all_categories[category], score),
-                      fill=bbox_color)
-
-    return image_raw
-
-
-#################
-# TensorRT Part #
-#################
+        raise NotImplementedError
 
 
 class PreprocessYOLO(object):
@@ -82,7 +98,7 @@ class PreprocessYOLO(object):
         image_preprocessed = self._shuffle_and_normalize(image_resized)
         return image_raw, image_preprocessed
 
-    def _load_and_resize(self, input_image_path):
+    def _load_and_resize(self, input_image_or_path):
         """Load an image from the specified path and resize it to the input resolution.
         Return the input image before resizing as a PIL Image (required for visualization),
         and the resized image as a NumPy float array.
@@ -91,24 +107,30 @@ class PreprocessYOLO(object):
         input_image_path -- string path of the image to be loaded
         """
 
-        if isinstance(input_image_path, str):
-            image_raw = Image.open(input_image_path)
-        elif isinstance(input_image_path, np.ndarray):
-            input_image_path = cv2.cvtColor(input_image_path,
-                                            cv2.COLOR_BGR2RGB)
-            image_raw = Image.fromarray(input_image_path)
+        if isinstance(input_image_or_path, str):
+            image_raw = Image.open(input_image_or_path)
+            # Expecting input_resolution in (height, width) format, adjusting to PIL
+            # convention (width, height) in PIL:
+            new_resolution = (self.yolo_input_resolution[1],
+                              self.yolo_input_resolution[0])
+            image_resized = image_raw.resize(new_resolution,
+                                             resample=Image.BICUBIC)
+            image_resized = np.array(image_resized,
+                                     dtype=np.float32,
+                                     order='C')
+            return image_raw, image_resized
+        elif isinstance(input_image_or_path, np.ndarray):
+            image_raw = input_image_or_path
+            new_resolution = (self.yolo_input_resolution[1],
+                              self.yolo_input_resolution[0])
+            image_resized = cv2.resize(image_raw, new_resolution)
+            image_resized = np.array(image_resized,
+                                     dtype=np.float32,
+                                     order='C')
+            return image_raw, image_resized
         else:
-            raise NotImplementedError(
-                'Unsuppoerted input image type: {}'.format(
-                    type(input_image_path)))
-        # Expecting yolo_input_resolution in (height, width) format, adjusting to PIL
-        # convention (width, height) in PIL:
-        new_resolution = (self.yolo_input_resolution[1],
-                          self.yolo_input_resolution[0])
-        image_resized = image_raw.resize(new_resolution,
-                                         resample=Image.BICUBIC)
-        image_resized = np.array(image_resized, dtype=np.float32, order='C')
-        return image_raw, image_resized
+            raise RuntimeError(
+                f'Invalid image input (type {input_image_or_path})')
 
     def _shuffle_and_normalize(self, image):
         """Normalize a NumPy array representing an image to the range [0, 1], and
@@ -261,8 +283,9 @@ class PostprocessYOLO(object):
             return math.exp(value)
 
         # Vectorized calculation of above two functions:
-        sigmoid_v = np.vectorize(sigmoid)
+        # sigmoid_v = np.vectorize(sigmoid)
         exponential_v = np.vectorize(exponential)
+        sigmoid_v = expit
 
         grid_h, grid_w, _, _ = output_reshaped.shape
 
@@ -363,38 +386,3 @@ class PostprocessYOLO(object):
 
         keep = np.array(keep)
         return keep
-
-
-#############
-# ONNX Part #
-#############
-
-
-def letterbox_image(image, size):
-    '''resize image with unchanged aspect ratio using padding'''
-    iw, ih = image.size
-    w, h = size
-    scale = min(w / iw, h / ih)
-    nw = int(iw * scale)
-    nh = int(ih * scale)
-
-    image = image.resize((nw, nh), Image.BICUBIC)
-    new_image = Image.new('RGB', size, (128, 128, 128))
-    new_image.paste(image, ((w - nw) // 2, (h - nh) // 2))
-    return new_image
-
-
-def prepare_data(image, model_image_size=(None, None)):
-    if model_image_size != (None, None):
-        assert model_image_size[0] % 32 == 0, 'Multiples of 32 required'
-        assert model_image_size[1] % 32 == 0, 'Multiples of 32 required'
-        boxed_image = letterbox_image(image, tuple(reversed(model_image_size)))
-    else:
-        new_image_size = (image.width - (image.width % 32),
-                          image.height - (image.height % 32))
-        boxed_image = letterbox_image(image, new_image_size)
-    image_data = np.array(boxed_image, dtype='float32')
-    image_data /= 255.
-    image_data = np.expand_dims(image_data, 0)  # Add batch dimension.
-    image_data_onnx = np.transpose(image_data, [0, 3, 1, 2])
-    return image_data_onnx

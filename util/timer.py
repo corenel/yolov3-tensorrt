@@ -60,7 +60,9 @@ class Timer(object):
 
     def log_and_restart(self, text: str):
         # print(f'[{text}] {self.elapsed()}')
-        self.log[text] = self.elapsed()
+        if text not in self.log:
+            self.log[text] = 0
+        self.log[text] += self.elapsed()
         self.counter[text] += 1
         self.restart()
 
@@ -75,5 +77,5 @@ class Timer(object):
         print('{:<20} {:<10}'.format('Item', 'Time (ms)'))
         print('-' * 30)
         for k, v in self.log.items():
-            print('{:<20} {:<10.2f}'.format(k, v * 1000 / self.counter[k]))
+            print('{:<20} {:<10.4f}'.format(k, v * 1000 / self.counter[k]))
         print('-' * 30)
